@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Simple Bazaar </title>
+    <script src="https://unpkg.com/petite-vue"></script>
+    <link rel="stylesheet" href="navbar.css">
+    <style>
+        body { font-family: sans-serif; background: #121212; color: #eee; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; border: 1px solid #333; text-align: left; }
+        th { background: #1f1f1f; }
+        tr:nth-child(even) { background: #1a1a1a; }
+        input { padding: 10px; width: 300px; background: #222; border: 1px solid #444; color: white; border-radius: 4px; }
+        .price-buy { color: #55ff55; }
+        .price-sell { color: #ff5555; }
+        #app {margin: 20px;}
+    </style>
+</head>
+<body>
+
+    
+    <nav class="navbar">
+    <div class="nav-container">
+        <div class="nav-logo">Skycrack</div>
+        <div class="nav-links">
+            <a href="/" class="nav-item">Home</a>
+            <a href="bazaar" class="nav-item active">Bazaar</a>
+            <a href="ah" class="nav-item">Auction House</a>
+            </div>
+    </div>
+    </nav>
+    
+
+   <div id="app">
+    <h1>Skyblock Bazaar</h1>
+    
+    <p style="color: cyan;">Status: {{ debugMsg }}</p>
+    
+    <button @click="fetchStats" style="padding: 10px; cursor: pointer;">
+        Force Manual Refresh
+    </button>
+
+    <input v-model="search" placeholder="Search items..." v-if="!loading" />
+
+    <div v-if="loading">
+        <h2 style="color: orange;">Loading...</h2>
+    </div>
+
+    <table v-else>
+        <thead>
+          <tr>
+              <th @click="setSort('id')" style="cursor: pointer;">
+                  Item {{ sortKey === 'id' ? (sortOrder === 1 ? '▲' : '▼') : '' }}
+              </th>
+              <th @click="setSort('buy')" style="cursor: pointer;">
+                  Buy Price {{ sortKey === 'buy' ? (sortOrder === 1 ? '▲' : '▼') : '' }}
+              </th>
+              <th @click="setSort('sell')" style="cursor: pointer;">
+                  Sell Price {{ sortKey === 'sell' ? (sortOrder === 1 ? '▲' : '▼') : '' }}
+              </th>
+          </tr>
+      </thead>
+        <tbody>
+            <tr v-for="item in filteredItems()">
+                <td>{{ item.id.replace(/_/g, ' ') }}</td>
+                <td class="price-buy">{{ item.buy.toLocaleString() }}</td>
+                <td class="price-sell">{{ item.sell.toLocaleString() }}</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<script>
+ 
+  const store = {
+    search: '',
+    products: {},
+    loading: true,
+    debugMsg: 'JS Initialized',
+
+    sortKey: 'id', 
+    sortOrder: 1,
+
+   
+        async fetchStats() {
+            this.debugMsg = "Fetch started...";
+            try {
+                const res = await fetch('/api/bazaar');
+                const data = await res.json();
+                
+                if (data && data.products) {
+                    this.products = data.products;
+                    this.debugMsg = "Data loaded: " + Object.keys(data.products).length + " items";
+                    this.loading = false;
+                } else {
+                    this.debugMsg = "JSON received but 'products' key is missing.";
+                }
+            } catch (e) {
+                this.debugMsg = "Fetch error: " + e.message;
+            }
+        },
+
+
+    setSort(key) {
+        if (this.sortKey === key) {
+            this.sortOrder *= -1; 
+        } else {
+            this.sortKey = key;
+            this.sortOrder = 1;
+        }
+    },
+
+    filteredItems() {
+        return Object.entries(this.products)
+            .filter(([id, item]) => {
+                if (!item || !item.quick_status) return false;
+                return id.toLowerCase().includes(this.search.toLowerCase());
+            })
+            .map(([id, item]) => ({
+                id: id,
+                buy: item.quick_status.buyPrice || 0,
+                sell: item.quick_status.sellPrice || 0
+            }))
+     
+            .sort((a, b) => {
+                let modifier = this.sortOrder;
+                if (a[this.sortKey] < b[this.sortKey]) return -1 * modifier;
+                if (a[this.sortKey] > b[this.sortKey]) return 1 * modifier;
+                return 0;
+            });
+    }
+    };
+
+
+    PetiteVue.createApp(store).mount('#app');
+    
+    store.fetchStats();
+</script>
+</body>
+</html>

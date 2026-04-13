@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Skycrack Pet AH</title>
+    <script src="https://unpkg.com/petite-vue"></script>
+    <link rel="stylesheet" href="navbar.css">
+    <style>
+        body { font-family: sans-serif; background: #121212; color: #eee; margin: 0; }
+        #app { padding: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; background: #1a1a1a; }
+        th, td { padding: 12px; border: 1px solid #333; text-align: left; }
+        th { background: #222; position: sticky; top: 0; z-index: 10; font-size: 0.9em; }
+        tr:hover { background: #252525; }
+        
+        input, select { 
+            padding: 10px; 
+            background: #222; 
+            border: 1px solid #444; 
+            color: white; 
+            border-radius: 4px; 
+        }
+        input { width: 300px; }
+        select { cursor: pointer; }
+        
+        .LEGENDARY { color: #ffaa00; font-weight: bold; }
+        .MYTHIC { color: #ff55ff; font-weight: bold; }
+        .EPIC { color: #aa00aa; font-weight: bold; }
+        .RARE { color: #5555ff; }
+        .UNCOMMON { color: #55ff55; }
+        .COMMON { color: #ffffff; }
+
+        .price { color: #ffac33; font-family: monospace; font-weight: bold; }
+        .target-price { color: #aaa; font-size: 0.9em; }
+        
+        .profit-good { color: #55ff55; font-weight: bold; }
+        .profit-bad { color: #ff5555; }
+        .profit-na { color: #777; font-style: italic; }
+
+        .controls { display: flex; align-items: center; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">Skycrack</div>
+            <div class="nav-links">
+                <a href="/" class="nav-item">Home</a>
+                <a href="bazaar" class="nav-item">Bazaar</a>
+                <a href="ah" class="nav-item active">Auction House</a>
+            </div>
+        </div>
+    </nav>
+
+    <div id="app" v-scope>
+        <h1>Pet Leveling Profit Calculator</h1>
+        
+        <div class="controls">
+            <input v-model="search" placeholder="Filter by name (e.g. Blue Whale)..." />
+
+            <select v-model="rarityFilter">
+                <option value="">All Rarities</option>
+                <option value="COMMON">Common</option>
+                <option value="UNCOMMON">Uncommon</option>
+                <option value="RARE">Rare</option>
+                <option value="EPIC">Epic</option>
+                <option value="LEGENDARY">Legendary</option>
+                <option value="MYTHIC">Mythic</option>
+            </select>
+
+            <button @click="fetchAH" style="padding: 10px; cursor: pointer; background: #333; color: white; border: 1px solid #555;">
+                Refresh Data
+            </button>
+
+            <span>Status: <span :style="{color: loading ? 'orange' : '#55ff55'}">{{ statusMsg }}</span></span>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th @click="setSort('item_name')" style="cursor: pointer;">Pet Name</th>
+                    <th @click="setSort('level')" style="cursor: pointer;">Level</th>
+                    <th @click="setSort('starting_bid')" style="cursor: pointer;">Buy Price</th>
+                    <th style="cursor: pointer;">Lvl 100 Value</th>
+                    <th @click="setSort('coins_per_xp')" style="cursor: pointer;">Coins / XP</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr v-for="auc in filteredAH()">
+                    <td :class="auc.tier">{{ getCleanName(auc.item_name) }}</td>
+                    <td>{{ getLevel(auc.item_name) }}</td>
+                    <td class="price">{{ formatNumber(auc.starting_bid) }}</td>
+                    
+                    <td class="target-price">
+                        <span v-if="getTargetPrice(auc)">{{ formatNumber(getTargetPrice(auc)) }}</span>
+                        <span v-else class="profit-na">No Lvl 100 on AH</span>
+                    </td>
+
+                    <td :class="getProfitClass(auc)">
+                        {{ formatCoinsPerXp(auc) }}
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+<script>
+    const EXP_NEEDED_TO_LEVEL = [
+        0, 100, 110, 120, 130, 145, 160, 175, 190, 210, 230, 250, 275, 300, 330, 360, 400, 440, 490, 540, 
+        600, 660, 730, 800, 880, 960, 1050, 1150, 1260, 1380, 1510, 1650, 1800, 1960, 2130, 2310, 2500, 2700, 2920, 3160, 
+        3420, 3700, 4000, 4350, 4750, 5200, 5700, 6300, 7000, 7800, 8700, 9700, 10800, 12000, 13300, 14700, 16200, 17800, 19500, 21300, 
+        23200, 25200, 27400, 29800, 32400, 35200, 38200, 41400, 44800, 48400, 52200, 56200, 60400, 64800, 69400, 74200, 79200, 84700, 90700, 97200, 
+        104200, 111700, 119700, 128200, 137200, 146700, 156700, 167700, 179700, 192700, 206700, 221700, 237700, 254700, 272700, 291700, 311700, 333700, 357700, 383700
+    ];
+
+    const RARITY_MULTIPLIERS = {
+        "COMMON": 1.0, "UNCOMMON": 1.5, "RARE": 2.0, "EPIC": 3.0, "LEGENDARY": 4.0, "MYTHIC": 4.0
+    };
+
+    const SPECIAL_PETS = {
+        "Golden Dragon": { maxLvl: 200, egg: "Golden Dragon Egg" },
+        "Jade Dragon":   { maxLvl: 200, egg: "Jade Dragon Egg" },
+        "Rose Dragon":   { maxLvl: 200, egg: "Rose Dragon Egg" }
+    };
+
+    const store = {
+        search: '',
+        rarityFilter: '',
+        auctions: [],
+        lowestMaxPrices: {},
+        loading: true,
+        statusMsg: 'Initializing...',
+        sortKey: 'coins_per_xp',
+        sortOrder: -1,
+
+        async fetchAH() {
+            this.loading = true;
+            this.statusMsg = "Fetching AH Cache...";
+            try {
+                const res = await fetch('/api/auctions');
+                const data = await res.json();
+                this.auctions = Array.isArray(data) ? data : [];
+                this.calculateLowestMaxPrices(); 
+                this.statusMsg = `Loaded ${this.auctions.length} pets`;
+                this.loading = false;
+            } catch (e) {
+                this.statusMsg = "Error: " + e.message;
+            }
+        },
+
+        calculateLowestMaxPrices() {
+            this.lowestMaxPrices = {};
+            this.auctions.forEach(a => {
+                const name = this.getCleanName(a.item_name);
+                const lvl = this.getLevel(a.item_name);
+                const config = SPECIAL_PETS[name] || { maxLvl: 100 };
+
+                if (lvl >= config.maxLvl) {
+                    const key = `${name}_${a.tier}`;
+                    if (!this.lowestMaxPrices[key] || a.starting_bid < this.lowestMaxPrices[key]) {
+                        this.lowestMaxPrices[key] = a.starting_bid;
+                    }
+                }
+            });
+        },
+
+        getTotalXp(level, tier, petName) {
+            const petConfig = SPECIAL_PETS[petName] || { maxLvl: 100 };
+            const currentLevel = Math.min(level, petConfig.maxLvl);
+            const mult = RARITY_MULTIPLIERS[tier] || 1.0;
+            let total = 0;
+
+            for (let i = 0; i < Math.min(currentLevel, 100); i++) {
+                total += (EXP_NEEDED_TO_LEVEL[i] * mult);
+            }
+
+            if (currentLevel > 100) {
+                const extraLevels = currentLevel - 100;
+                
+                const xpPerLevelPost100 = 471675 * mult; 
+                total += (extraLevels * xpPerLevelPost100);
+            }
+            return total;
+        },
+
+        getRemainingXp(auc) {
+            const rawName = this.getCleanName(auc.item_name);
+            let petName = rawName;
+            let currentLevel = this.getLevel(auc.item_name);
+
+            for (const [realName, cfg] of Object.entries(SPECIAL_PETS)) {
+                if (rawName === cfg.egg || rawName === realName) {
+                    petName = realName;
+                    if (rawName.includes("Egg")) currentLevel = 1;
+                    break;
+                }
+            }
+
+            const petConfig = SPECIAL_PETS[petName] || { maxLvl: 100 };
+            if (currentLevel >= petConfig.maxLvl) return 0;
+
+            const totalReq = this.getTotalXp(petConfig.maxLvl, auc.tier, petName);
+            const currentXp = this.getTotalXp(currentLevel, auc.tier, petName);
+            return totalReq - currentXp;
+        },
+
+        getTargetPrice(auc) {
+            let name = this.getCleanName(auc.item_name);
+            for (const [realName, cfg] of Object.entries(SPECIAL_PETS)) {
+                if (name === cfg.egg) { name = realName; break; }
+            }
+            return this.lowestMaxPrices[`${name}_${auc.tier}`] || null;
+        },
+
+        getCoinsPerXpVal(auc) {
+            const targetPrice = this.getTargetPrice(auc);
+            if (!targetPrice) return null;
+
+            const remainingXp = this.getRemainingXp(auc);
+            if (remainingXp <= 0) return null;
+
+            const profit = targetPrice - auc.starting_bid;
+            return profit / remainingXp;
+        },
+
+        formatCoinsPerXp(auc) {
+            const val = this.getCoinsPerXpVal(auc);
+            return val === null ? "N/A" : (val > 0 ? "+" : "") + val.toFixed(2) + " c/xp";
+        },
+
+        getProfitClass(auc) {
+            const val = this.getCoinsPerXpVal(auc);
+            return val === null ? 'profit-na' : (val > 0 ? 'profit-good' : 'profit-bad');
+        },
+
+        formatNumber(num) { return num.toLocaleString(); },
+        getLevel(itemName) {
+            const match = itemName.match(/\[Lvl (\d+)\]/);
+            return match ? parseInt(match[1]) : 0;
+        },
+        getCleanName(itemName) {
+            return itemName.replace(/\[Lvl \d+\]\s*/, '').trim();
+        },
+
+        setSort(key) {
+            if (this.sortKey === key) { this.sortOrder *= -1; } 
+            else { this.sortKey = key; this.sortOrder = (key === 'coins_per_xp' ? -1 : 1); }
+        },
+
+        filteredAH() {
+            return this.auctions
+                .filter(a => {
+               
+                    const isNotFake = !a.item_name.includes("Skin") && !a.item_name.includes("Boost");
+                   
+                    const isNotMaxed = this.getRemainingXp(a) > 0;
+                    
+                    const matchesSearch = a.item_name.toLowerCase().includes(this.search.toLowerCase());
+                    const matchesRarity = this.rarityFilter === '' || a.tier === this.rarityFilter;
+                    
+                    return isNotFake && isNotMaxed && matchesSearch && matchesRarity; 
+                })
+                .sort((a, b) => {
+                    let valA, valB;
+                    if (this.sortKey === 'coins_per_xp') {
+                        valA = this.getCoinsPerXpVal(a) ?? -9999999;
+                        valB = this.getCoinsPerXpVal(b) ?? -9999999;
+                    } else if (this.sortKey === 'level') {
+                        valA = this.getLevel(a.item_name);
+                        valB = this.getLevel(b.item_name);
+                    } else {
+                        valA = a[this.sortKey];
+                        valB = b[this.sortKey];
+                    }
+                    return (valA < valB ? -1 : 1) * this.sortOrder;
+                });
+        }
+    };
+
+    PetiteVue.createApp(store).mount('#app');
+    store.fetchAH();
+</script>
+</body>
+</html>
